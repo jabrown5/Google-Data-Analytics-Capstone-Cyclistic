@@ -1,0 +1,427 @@
+---
+title: 'Google Data Analytics Capstone: Cyclistic'
+author: "Jennifer B."
+date: "10/12/2022"
+output: html_document
+---
+## Load necessary packages:
+
+```{r include=FALSE}
+library(readr)
+library(tidyverse)
+library(tidyr)
+library(dplyr)
+library(lubridate)
+library(skimr)
+library(janitor)
+library(readxl)
+library(EnvStats)
+library(gmodels)
+library(viridis)
+```
+
+## Merge .csv files into one data frame.
+
+#### Comment this code out after export of newly created dataframe with all observations / rows
+
+Code help from: (https://community.rstudio.com/t/how-to-import-multiple-csv-files/119449/6)
+
+```{r echo=FALSE}
+# list_of_files <- list.files(path = "data_raw",
+#                             recursive = TRUE,
+#                             pattern = "\\.csv$",
+#                             full.names = TRUE)
+# 
+# df <- readr::read_csv(list_of_files, id = "file_name")
+```
+### Exporting the completed dataframe
+
+Comment this code out after export of newly created dataframe with all observations / rows.
+
+```{r}
+# write.csv(df, "data/2021_Cyclistic_Data.csv", row.names=FALSE)
+```
+
+### Import the complete dataframe
+
+Comment this code out if original data files have not yet been merged.
+
+```{r}
+df <- read.csv(file = "data/2021_Cyclistic_Data.csv")
+```
+
+### Check the imported data
+
+```{r}
+glimpse(df)
+```
+
+## Data Cleaning
+
+### Remove Duplicates
+
+Duplicates were removed using the ride_id column. Of note, there were no actual duplicates as indicated by the n of 5,595,063 which is identical to the n for the original merged dataframe.
+
+Code help: (https://www.datanovia.com/en/lessons/identify-and-remove-duplicate-data-in-r/)
+
+```{r}
+df %>% distinct(ride_id, .keep_all = TRUE)
+```
+
+### Drop columns
+
+In an attempt to conserve computing space, unnecessary columns were dropped. These columns were not needed for the future analyses.
+
+* file_name: which file the observation was in prior to merging all 12 data sets.
+* ride_id: is the unique identifier for each ride.
+
+Help from: (https://www.listendata.com/2015/06/r-keep-drop-columns-from-data-frame.html)
+
+```{r}
+df = subset(df, select = -c(file_name, ride_id) )
+```
+
+### Finding how many "incomplete" cases are in the dataframe
+
+These cases are not incomplete and are, instead, cases which were not docked at a station. This is a part of the Cyclistic bike share program where bikes do not need to be docked and can be left at any location. A total of 1,006,761 rides are instances where the bike either began or completed its journey with no docking station.
+
+```{r}
+df[!complete.cases(df),]
+```
+
+## Variable Creation
+
+### Calculating ride duration variable (minutes)
+
+```{r}
+df$duration_min <- difftime(df$ended_at,df$started_at, units="mins")
+```
+
+### Calculating the Day of the Week and Month the ride began
+
+```{r}
+# Variable creation for the day of the week a ride began
+df$weekday <- wday(df$started_at, label=TRUE, abbr=FALSE)
+
+# Variable creation for the month a ride bgan
+df$month <- month(df$started_at, label=TRUE, abbr=FALSE)
+```
+
+### Confirming that there are no missing duration, day of the week, and month values
+
+```{r}
+sum(is.na(df$duration_sec))
+sum(is.na(df$duration_min))
+sum(is.na(df$weekday))
+sum(is.na(df$month))
+```
+
+### Checking variable types
+
+```{r}
+head(df)
+```
+
+### Mutating duration in minutes to numeric for later analysis
+
+```{r}
+df = df %>% 
+  mutate_at(vars(duration_min), as.numeric)
+```
+
+### Examining the duration variable
+
+As a part of data cleaning, maximum and minimum values for duration were found in order to search for cases needing additional research and possible deletion.
+
+```{r}
+max(df$duration_min)
+min(df$duration_min)
+```
+
+### Removing rows/rides where the duration is negative
+
+```{r}
+df2 <- subset(df, duration_min >= 0)
+
+max(df2$duration_min)
+min(df2$duration_min)
+
+```
+
+### Creating a Binary variable for identifying bikes that were or were not docked at the start and end of the ride
+
+Code help with new variable creation: https://www.tutorialspoint.com/how-to-create-a-column-with-binary-variable-based-on-a-condition-of-other-variable-in-an-r-data-frame
+
+Code help for processing NA values: https://stackoverflow.com/questions/59238192/create-dummy-variable-if-na-1-else-1
+
+Code help for extracting AM / PM from datetime: 
+1. https://www.geeksforgeeks.org/how-to-extract-time-from-datetime-in-r/
+2. https://stat.ethz.ch/R-manual/R-devel/library/base/html/strptime.html
+
+```{r}
+# Create a binary variable indicating whether the bike was Docked or Not Docked at the start of the ride.
+df2$start_docked <- ifelse(is.na(df2$start_station_id), "Not Docked", "Docked")
+
+# Create a binary variable indicating whether the bike was Docked or Not Docked at the end of the ride.
+df2$end_docked <- ifelse(is.na(df2$end_station_id), "Not Docked", "Docked")
+
+# Create an am / pm binary variable
+df2$am_pm <- format(as.POSIXct(df2$started_at), format = "%p")
+
+```
+
+
+
+
+```{r}
+# write.csv(df2, "data/2021_Cyclistic_Data_2.csv", row.names=FALSE)
+```
+
+```{r}
+# df2 <- read.csv(file = "data/2021_Cyclistic_Data_2.csv")
+```
+
+
+
+## Examining data for outliers
+
+Using Rosner's test, duration outliers were identified on full range of times in the created duration_min variable. The test noted that all times over 24 hours were outliers and so these were removed in a following step. 
+
+Code help: https://statsandr.com/blog/outliers-detection-in-r/
+```{r}
+#test <- rosnerTest(df2$duration_min,
+#  k = 100
+#)
+#test
+```
+
+### Keeping observations / rows with ride durations of 24 hours or less
+
+```{r}
+df3 <- subset(df2, duration_min <= 1440)
+
+max(df3$duration_min)
+min(df3$duration_min)
+
+```
+
+## Further examining data for outliers
+
+While outliers were identified on full range of times in a prior step, this step examined outliers after any rides over 24 hours were removed. 
+
+Code help: https://statsandr.com/blog/outliers-detection-in-r/
+```{r}
+# test <- rosnerTest(df3$duration_min,
+#   k = 100
+# )
+# test
+```
+
+
+## Saving the cleaned dataframe
+
+After data manipulation, cleaning and variable creation, the data frame was saved to avoid running the prior steps. The cleaned data frame can be loaded and analyzed without running the above steps.
+
+### Saving the cleaned data frame
+
+Comment out this step if cleaned data frame does not need to be saved again.
+
+```{r}
+# write.csv(df3, "data/2021_Cyclistic_Data_3.csv", row.names=FALSE)
+```
+
+### Reading in the cleaned data frame
+
+```{r}
+df3 <- read.csv(file = "data/2021_Cyclistic_Data_3.csv")
+```
+
+### Creating frequency tables for plotting
+
+Code help: https://statisticsglobe.com/add-count-labels-on-top-of-ggplot2-barchart-in-r
+
+```{r}
+member_casual <- as.data.frame(table(df3$member_casual)) 
+rideable_type <- as.data.frame(table(df3$rideable_type)) 
+weekday <- as.data.frame(table(df3$weekday)) 
+month <- as.data.frame(table(df3$month)) 
+start_docked <- as.data.frame(table(df3$start_docked)) 
+end_docked <- as.data.frame(table(df3$end_docked)) 
+am_pm <- as.data.frame(table(df3$am_pm)) 
+```
+
+### Bar graphs for variables of interest
+
+```{r}
+ggplot(data = member_casual, aes(x = Var1, y = Freq, fill = Var1)) +
+  geom_bar(stat = "identity") +
+  geom_text(aes(label = Freq), vjust=-0.25) +
+  labs(title="Membership Status", subtitle="", x="Membership Type", y="Count") + # title and axis labeling
+  theme(axis.text.x = element_text(angle = 45), legend.position = "none") +
+  scale_color_viridis(discrete=TRUE, option="D") +
+  scale_fill_viridis(discrete=TRUE)
+
+
+ggplot(data = rideable_type, aes(x = Var1, y = Freq, fill = Var1)) +
+  geom_bar(stat = "identity") +
+  geom_text(aes(label = Freq), vjust = -0.25) +
+  labs(title="Type of Bike", subtitle="", x="Bicycle Type", y="Count") +
+  theme(axis.text.x = element_text(angle = 45), legend.position = "none") +
+  scale_color_viridis(discrete=TRUE, option="D") +
+  scale_fill_viridis(discrete=TRUE)
+
+weekday$Var1 = factor(weekday$Var1, levels=c("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"))
+ggplot(data = weekday, aes(x = Var1, y = Freq, fill = Var1)) +
+  geom_bar(stat = "identity") +
+  geom_text(aes(label = Freq), vjust = -0.25) +
+  labs(title="Day of the Week", subtitle="", x="Day of the Week", y="Count") +
+  theme(axis.text.x = element_text(angle = 45), legend.position = "none") +
+  scale_color_viridis(discrete=TRUE, option="D") +
+  scale_fill_viridis(discrete=TRUE)
+
+month$Var1 = factor(month$Var1, levels=c("January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"))
+ggplot(data = month, aes(x = Var1, y = Freq, fill = Var1)) +
+  geom_bar(stat = "identity") +
+  geom_text(aes(label = Freq), vjust = -0.25) +
+  labs(title="Month", subtitle="", x="Month", y="Count") +
+  theme(axis.text.x = element_text(angle = 45), legend.position = "none") +
+  scale_color_viridis(discrete=TRUE, option="D") +
+  scale_fill_viridis(discrete=TRUE)
+
+
+ggplot(data = start_docked, aes(x = Var1, y = Freq, fill = Var1)) +
+  geom_bar(stat = "identity") +
+  geom_text(aes(label = Freq), vjust = -0.25) +
+  labs(title="Start of Ride Docking Status", subtitle="", x="Docking Status", y="Count") +
+  theme(axis.text.x = element_text(angle = 45), legend.position = "none") +
+  scale_color_viridis(discrete=TRUE, option="D") +
+  scale_fill_viridis(discrete=TRUE)
+
+
+ggplot(data = end_docked, aes(x = Var1, y = Freq, fill = Var1)) +
+  geom_bar(stat = "identity") +
+  geom_text(aes(label = Freq), vjust = -0.25) +
+  labs(title="End of Ride Docking Status", subtitle="", x="Docking Status", y="Count") +
+  theme(axis.text.x = element_text(angle = 45), legend.position = "none")  +
+  scale_color_viridis(discrete=TRUE, option="D") +
+  scale_fill_viridis(discrete=TRUE)
+
+
+ggplot(data = am_pm, aes(x = Var1, y = Freq, fill = Var1)) +
+  geom_bar(stat = "identity") +
+  geom_text(aes(label = Freq), vjust = -0.25) +
+  labs(title="AM or PM Ride Time start", subtitle="", x="AM or PM", y="Count") +
+  theme(axis.text.x = element_text(angle = 45), legend.position = "none") +
+  scale_color_viridis(discrete=TRUE, option="D") +
+  scale_fill_viridis(discrete=TRUE)
+```
+## Descriptives by Group (member / casual)
+
+### Setting up data into crosstab tables
+
+This step provides within group percentages (member, casual) for variables of interest. These tables will be used for graphing.
+
+```{r}
+# ORIGINAL CODE CONSTRUCTION:
+# am_pm = table(df3$member_casual, df3$am_pm)
+# am_pm.prop <- prop.table(am_pm, 1)*100
+# am_pm.df <- as.data.frame(am_pm.prop)
+# names(am_pm.df) <- c("member_casual", "am_pm", "frequency")
+
+rideable_type.df <- as.data.frame(prop.table(table(df3$member_casual, df3$rideable_type), 1)*100)
+names(rideable_type.df) <- c("member_casual", "rideable_type", "frequency")
+
+weekday.df <- as.data.frame(prop.table(table(df3$member_casual, df3$weekday), 1)*100)
+names(weekday.df) <- c("member_casual", "weekday", "frequency")
+
+month.df <- as.data.frame(prop.table(table(df3$member_casual, df3$month), 1)*100)
+names(month.df) <- c("member_casual", "month", "frequency")
+
+start_docked.df <- as.data.frame(prop.table(table(df3$member_casual, df3$start_docked), 1)*100)
+names(start_docked.df) <- c("member_casual", "start_docked", "frequency")
+
+end_docked.df <- as.data.frame(prop.table(table(df3$member_casual, df3$end_docked), 1)*100)
+names(end_docked.df) <- c("member_casual", "end_docked", "frequency")
+
+am_pm.df <- as.data.frame(prop.table(table(df3$member_casual, df3$am_pm), 1)*100)
+names(am_pm.df) <- c("member_casual", "am_pm", "frequency")
+
+duration_by_membership.df <- as.data.frame(aggregate(df3$duration_min, list(df3$member_casual), FUN=mean))
+names(duration_by_membership.df) <- c("member_casual", "time")
+
+# am_pm
+# am_pm.prop
+# glimpse(am_pm.df)
+
+```
+
+### Plotting variables of interest by membership status
+
+```{r}
+# Type of bicycle by membership type
+ggplot(data = rideable_type.df, aes(x=member_casual, y=frequency, fill=rideable_type)) +
+  geom_col(position="dodge") +
+  labs(title="Type of Bicyle by Membership Type", subtitle = "", x="Membership Type", y="Percent") +
+  geom_text(aes(label = round(frequency, digits=2)), position = position_dodge(width = 0.9), vjust=-0.25) +
+  theme(axis.text.x = element_text(angle = 45)) +
+  scale_color_viridis(discrete=TRUE, option="D") +
+  scale_fill_viridis(discrete=TRUE)
+
+# Day of the week the ride began on by membership type
+# Reordering bars code help: https://community.rstudio.com/t/manually-reordering-bars-in-bar-chart-ggplot2/69145
+weekday.df$weekday = factor(weekday.df$weekday, levels=c("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"))
+ggplot(data = weekday.df, aes(x=member_casual, y=frequency, fill=weekday)) +
+  geom_col(position="dodge") +
+  labs(title="Day of the Week by Membership Type", subtitle = "", x="Membership Type", y="Percent") +
+  geom_text(aes(label = round(frequency, digits=2)), position = position_dodge(width = 0.9), vjust=-0.25) +
+  theme(axis.text.x = element_text(angle = 45)) +
+  scale_color_viridis(discrete=TRUE, option="D") +
+  scale_fill_viridis(discrete=TRUE)
+
+# Month the ride began by membership type
+month.df$month = factor(month.df$month, levels=c("January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"))
+ggplot(data = month.df, aes(x=member_casual, y=frequency, fill=month)) +
+  geom_col(position="dodge") +
+  labs(title="Month of Ride by Membership Type", subtitle = "", x="Membership Type", y="Percent") +
+  geom_text(aes(label = round(frequency, digits=2)), position = position_dodge(width = 0.9), vjust=-0.25) +
+  theme(axis.text.x = element_text(angle = 45)) +
+  scale_color_viridis(discrete=TRUE, option="D") +
+  scale_fill_viridis(discrete=TRUE)
+
+# Start of ride bicycle docking status by membership type
+ggplot(data = start_docked.df, aes(x=member_casual, y=frequency, fill=start_docked)) +
+  geom_col(position="dodge") +
+  labs(title="Docking Status at Ride Start by Membership Type", subtitle = "", x="Membership Type", y="Percent") +
+  geom_text(aes(label = round(frequency, digits=2)), position = position_dodge(width = 0.9), vjust=-0.25) +
+  theme(axis.text.x = element_text(angle = 45)) +
+  scale_color_viridis(discrete=TRUE, option="D") +
+  scale_fill_viridis(discrete=TRUE)
+
+# End of ride bicycle docking status by membership type
+ggplot(data = end_docked.df, aes(x=member_casual, y=frequency, fill=end_docked)) +
+  geom_col(position="dodge") +
+  labs(title="Docking Stutus at Ride End by Membership Type", subtitle = "", x="Membership Type", y="Percent") +
+  geom_text(aes(label = round(frequency, digits=2)), position = position_dodge(width = 0.9), vjust=-0.25) +
+  theme(axis.text.x = element_text(angle = 45)) +
+  scale_color_viridis(discrete=TRUE, option="D") +
+  scale_fill_viridis(discrete=TRUE)
+
+# AM or PM ride start time by membership type
+ggplot(data = am_pm.df, aes(x=member_casual, y=frequency, fill=am_pm)) +
+  geom_col(position="dodge") +
+  labs(title="AM or PM Ride Start Time by Membership Type", subtitle = "", x="Membership Type", y="Percent") +
+  geom_text(aes(label = round(frequency, digits=2)), position = position_dodge(width = 0.9), vjust=-0.25, size=5) +
+  theme(axis.text.x = element_text(angle = 45)) +
+  scale_color_viridis(discrete=TRUE, option="D") +
+  scale_fill_viridis(discrete=TRUE)
+
+# Ride duration (in minutes) by membership type
+ggplot(data = duration_by_membership.df, aes(x=member_casual, y=time)) +
+  geom_col(position="dodge") +
+  labs(title="Ride Duration by Membership Type", subtitle = "", x="Membership Type", y="Time (Minutes)") +
+  geom_text(aes(label = round(time, digits=2)), position = position_dodge(width = 0.9), vjust=-0.25) +
+  theme(axis.text.x = element_text(angle = 45)) +
+  scale_color_viridis(discrete=TRUE, option="D") +
+  scale_fill_viridis(discrete=TRUE)
+
+```
